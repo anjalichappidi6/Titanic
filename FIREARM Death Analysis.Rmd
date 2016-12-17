@@ -1,0 +1,232 @@
+---
+title: "Firearm Violence and Death Analysis"
+author: "Anjali Chappidi"
+date: '`r Sys.Date()`'
+output: html_document
+---
+## Firearm Violence and Death Analysis {.tabset}
+
+###Overview
+
+The goal of this report is to perform an exploratory analysis on the Gun Deaths that happened in the year of 2013. 
+
+The unstructured data used in this report is loaded from:
+[Data Source](ftp://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/DVS/mortality). 
+The Codebook for the above specified data can be found at:
+[Code Book](http://www.cdc.gov/nchs/data/dvs/Record_Layout_2013.pdf)
+
+Since the data loaded has various causes of deaths, it is subset to load FIREARM deaths data. Here we have subsetted various underlying causes of usage of Firearms such as :
+
+1. Accidental  
+2. Suicide
+3. Homicide
+4. Undetermined Intent and
+5. Legal Intervention
+
+I have attempted to slice the data as per my analysis requirements.
+
+###Packages Required 
+
+The file that is directly loaded without cleaning has 2601452 observations of 45 variables.
+The description of each variable is provided in the codebook.
+
+Some of the variables that I would like to describe are given below:
+
+detail_age : GIves the age 
+Underlying_Cause: Has some codes each of which describes a cause of death
+
+The prerequisite libraries that are used are given as follows:
+
+Description of packages:
+
+1.DT = For HTML display   
+2.readr = reads tabular data into R   
+3.dplyr = data manipulation in r    
+4.tidyr = Helps in tidying the data with magrittr    
+5.ggplot2 = graphical representation in r    
+6.tibble = For manipulating and printing dataframes    
+7.magrittr = For using the pipe operator     
+8.sqldf = For using sql commands    
+
+
+
+```{r, message=FALSE, warning=FALSE}
+library(DT)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tibble)
+library(magrittr)
+library(sqldf)
+
+```
+
+###Data Description and Import
+
+The data is first downloaded from the source and structured
+
+```{r, message=FALSE, warning=FALSE}
+year <- 2013
+url <- "ftp://ftp.cdc.gov/pub/Health_Statistics/NCHS/Datasets/DVS/mortality/mort2013us.zip"
+
+structure1 <- fwf_widths(c(19,1,40,2,1,1,2,2,1,4,1,2,2,2,2,1,1,1,16,4,1,1,1,1,34,1,1,4,3,1,3,3,2,1,281,1,2,1,1,1,1,33,3,1,1),
+                       col_names = c("drop1", "res_status", "drop2", "education_89", "education_03", "education_flag", "month", 
+                                     "drop3", "sex", "detail_age", "age_flag", "age_recode", "age_recode2", "age_group", 
+                                     "age_infant", "death_place", "marital", "day_of_week", "drop4", "data_year", "at_work", 
+                                     "death_manner", "burial", "autopsy", "drop5", "activity", "injury_place", 
+                                     "underlying_cause", "cause_recode358", "drop6", "cause_recode113", "cause_recode130", 
+                                     "cause_recode39", "drop7", "multiple_causes", "drop8", "race", "race_bridged", "race_flag", 
+                                     "race_recode", "race_recode2", "drop9", "hispanic", "drop10", "hispanic_recode"))
+  
+  temp <- tempfile()
+  download.file(url, temp, quiet = T)
+```
+
+After the initial download , it is unzipped and structured. Below is a overview at the data.
+
+```{r, message=FALSE, warning=FALSE} 
+
+  # Read in data
+  Rawfire1 <- read_fwf(unzip(temp), structure1)
+  head(Rawfire1)
+
+
+```
+
+A look at the initial data:
+
+```{r, message=FALSE, warning=FALSE}
+
+DT::datatable(head(Rawfire1,100))
+
+```
+
+Conert the data into tibble format:
+
+```{r, message=FALSE, warning=FALSE}
+Raw_Tibble <- as_tibble(Rawfire1)
+dim(Raw_Tibble)
+```
+
+###Data Subsetting and Cleaning
+
+Looking at the data, we need to perform certain actions on it:
+
+1. Dropping empty fields. Now the number of variables drop to 35. 
+
+```{r, message=FALSE, warning=FALSE}
+Raw_Tibble <- Raw_Tibble %>% select(-contains("drop"))
+```
+
+Subsetting Raw data file based on the underlying cause of death having codes of Firearms.
+1. Accidental (W32,W33,W34)
+2. Suicide (X72,X73,X74)
+3. Homicide (U014,X93,X94)
+4. Undetermined Intent (Y22,Y23,Y24)and
+5. Legal Intervention (Y350)
+
+  
+```{r, message=FALSE, warning=FALSE}
+Firearm <- Raw_Tibble %>% filter(underlying_cause %in% c("W32", "W33", "W34", "X72", "X73", "X74", "U014", "X93", "X94", "X95", "Y22", "Y23", "Y24", "Y350"))
+
+head(Firearm)
+```
+
+Now I would like to categorise them and mutate the data based on the underlying cause by adding the categorical variables for intent, weapon, plus dummy for police shootings.
+
+```{r, message=FALSE, warning=FALSE}
+Firearms <- Firearm %>%
+    mutate(IntentDeath = ifelse(underlying_cause %in% c("W32", "W33", "W34"), "Accidental",
+                    ifelse(underlying_cause %in% c("X72", "X73", "X74"), "Suicide",
+                    ifelse(underlying_cause %in% c("*U01.4", "X93", "X94","X95","Y350"),"Homicide",
+                    ifelse(underlying_cause %in% c("Y22", "Y23", "Y24"), "Undetermined", 
+                           ifelse(underlying_cause == "Y350", "PoliceDeath",NA))))),
+           WeaponDeaths = ifelse(underlying_cause %in% c("W32", "X72", "X93", "Y22"), "Handgun",
+              ifelse(underlying_cause %in% c("W33", "X73", "X94", "Y23"), "Rifle","Other/unknown")),
+           Year = year)
+head(Firearms)
+```
+
+Next step of cleaning the data is Creating a new age variable by coding every age under 1 as "0".
+A look at the data after this step of cleaning:
+
+```{r, message=FALSE, warning=FALSE}
+
+  Firearms <- Firearms %>%
+    mutate(age = ifelse(substr(detail_age, 1, 1) == "1", as.numeric(substr(detail_age, 2, 4)), # Year
+                        ifelse(detail_age == 9999, NA, 0)),
+           age = ifelse(age == 999, NA, age))
+
+DT::datatable(head(Firearms,100))
+
+```
+
+###Exploratory Data Analysis:
+
+
+Below is a step to subset the data as per the requirement for analysis:
+
+From the codebbok , the following analysis of the variables are drawn and hence mutated with the new columns for easy understanding and analysis.
+
+The new columns added for the analysis are:
+Place, education, race.
+
+```{r, message=FALSE, warning=FALSE}
+
+Firearms <- Firearms %>% 
+  mutate(place = factor(injury_place, labels = c("Home", "Residential institution", "School/instiution", "Sports", "Street","Trade/service area", "Industrial/construction", "Farm", "Other specified","Other unspecified")),
+         education = ifelse(education_flag == 1, 
+                            cut(as.numeric(education_03), breaks = c(0, 2, 3, 5, 8, 9, labels = c("Less than HS", "HS/GED", "Some college", "BA+", NA))),
+                            cut(as.numeric(education_89), breaks = c(0, 11, 12, 15, 17, 99), labels = c("Less than HS", "HS/GED", "Some college", "BA+", NA))),
+         race = ifelse(hispanic > 199 & hispanic <996, "Hispanic",
+                       ifelse(race == "01", "White",
+                              ifelse(race == "02", "Black",
+                                     ifelse(as.numeric(race) >= 4 & as.numeric(race) <= 78, "Asian/Pacific Islander","Native American/Alaskan")))),
+         race = ifelse(is.na(race), "Unknown", race))
+Firearms1 <- sqldf("select year, month, IntentDeath,WeaponDeaths,sex, age, race,place, education from Firearms")
+head(Firearms1)
+
+```
+
+The Main aim of the analysis is to explore on:
+1. The underlying causes behind the deaths that occurred and what mainly is the cause behind the deaths
+2. How the deaths differ between different sex
+3. How the deaths differ in different age groups
+4. How the deaths differ in different races
+
+
+```{r, message=FALSE, warning=FALSE}
+
+Firearms1 %>% ggplot(aes(x=age))+geom_histogram(aes(y = ..density..),binwidth = 10, color ="grey30", fill= "lightcyan") + geom_density(alpha = .2, fill = "khaki3")+ xlab("Age")+ ylab("Count of Deaths")
+
+
+F1 <- Firearms1 %>% group_by(place) %>% summarize(n = n()) %>% mutate(frequency = n/ sum(n) ) %>% arrange(desc(n))
+F1 %>% ggplot(aes(x=place,y=frequency, fill=n))+theme(axis.text.x = element_text(angle = 45, size=8, hjust = 1, vjust = 1))+geom_bar(stat = "identity")
+
+F2 <- Firearms1 %>% group_by(education,sex) %>% summarize(n = n()) %>% mutate(frequency = n/ sum(n) ) %>% arrange(desc(n))
+F2 %>% ggplot(aes(x=education,y=frequency, fill=n))+geom_bar(stat = "identity")
+
+F3 <- Firearms1 %>% group_by(education,sex) %>% summarize(n = n()) 
+F3 %>% ggplot(aes(x=sex,y=n)) + geom_bar(stat = "identity", color ="grey30",fill = "lightcyan") + facet_wrap(~education,scales = "free_y")
+
+F4 <- Firearms1 %>% group_by(race,sex) %>% summarize(n = n()) 
+F4 %>% ggplot(aes(x=sex,y=n)) + geom_bar(stat = "identity", color ="grey30",fill = "lightcyan") + facet_wrap(~race,scales = "free_y")
+
+F5 <- Firearms1 %>% group_by(IntentDeath,sex) %>% summarize(n = n()) %>% mutate(frequency = n/ sum(n) ) %>% arrange(desc(n))
+F5 %>% ggplot(aes(x = sex, y = n, fill = sex)) + geom_boxplot()
+F5 %>% ggplot(aes(x=sex,y=n)) + geom_bar(stat = "identity", color ="grey30",fill = "lightcyan") + facet_wrap(~IntentDeath,scales = "free_y")
+
+F6 <- Firearms1 %>% group_by(IntentDeath,race) %>% summarize(n = n())
+F6 %>% ggplot(aes(x=race,y=n)) +theme(axis.text.x = element_text(angle = 45, size=8, hjust = 1, vjust = 1))+ geom_bar(stat = "identity", color ="grey30",fill = "lightcyan") + facet_wrap(~IntentDeath,scales = "free_y")
+```
+
+###Summary
+
+Observations:
+
+1.Women are far less likely to be victims in any race.     
+2.It is observed that nearly 2/3rds of the total deaths are suicides.   
+3.More than 85% of suicide victims are males.   
+4.More than half of the suicides are men with more age.   
+5.White men have the highest number of deaths.    
